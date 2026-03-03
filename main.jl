@@ -494,11 +494,11 @@ function test_bsqmrr2_vs_deflation()
         max_active_res[t] = max_act
     end
 
-    p1 = plot(title="Dynamic States: Seed (Grn) → Active (Blu) → Converged (Gld)",
+    p1 = plot(title="States: Seed (Grn) → Active (Blu) → Converged (Gld)",
         yaxis=:log, xlabel="Iteration", ylabel="Relative Residual Norm", legend=:outertopright)
 
     plot!(p1, k_vec, mat_seed, color=:green, lw=1, alpha=0.15, label="")
-    plot!(p1, [0], [NaN], color=:green, lw=2, label="Seed RHS")
+    plot!(p1, [0], [NaN], color=:green, lw=2, label="Passive RHS")
 
     plot!(p1, k_vec, mat_active, color=:blue, lw=1, alpha=0.3, label="")
     plot!(p1, [0], [NaN], color=:blue, lw=2, label="Active RHS")
@@ -510,14 +510,14 @@ function test_bsqmrr2_vs_deflation()
 
     p2 = plot(title="Max Residual (Original vs Seed)", yaxis=:log, xlabel="Iteration", legend=:topright)
     plot!(p2, d1.k, d1.real_residual, label="Original (s=$m_active)", lw=4, color=:black, alpha=0.5)
-    plot!(p2, k_vec, max_active_res, label="Seed-SQMR (Dynamic Active Block)", lw=2, color=:red, linestyle=:dash)
+    plot!(p2, k_vec, max_active_res, label="Restarted Seed-SQMR", lw=2, color=:red, linestyle=:dash)
 
     max_all_d2 = [maximum(r) for r in eachrow(res_matrix)]
     plot!(p2, k_vec, max_all_d2, label="Seed-SQMR (Max of ALL $m_total RHS)", lw=2, color=:magenta, linestyle=:dot)
 
     p3 = plot(title="Krylov Subspace Dimension Size (m_active per Step)", xlabel="Iteration", legend=:topright)
     plot!(p3, d1.k, d1.block_size, label="Original (s=$m_active constant)", lw=3, color=:black, alpha=0.5)
-    plot!(p3, d2.k, d2.block_size, label="Seed-SQMR (Dynamic Size)", lw=2, color=:red, linestyle=:dash, linetype=:steppost)
+    plot!(p3, d2.k, d2.block_size, label="Restarted Seed-SQMR", lw=2, color=:red, linestyle=:dash, linetype=:steppost)
 
     display(plot(p1, p2, p3, layout=(3, 1), size=(800, 1000), margin=5Plots.mm))
     savefig("output/bsqmr_alm_compare_722.png")
