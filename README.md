@@ -1,6 +1,6 @@
 # Restarted Seed Block SQMR
 
-A high-performance Julia implementation of the **Block Symmetric Quasi-Minimal Residual (Block-SQMR)** method with a dynamic **Seed Deflation** mechanism. 
+A high-performance Julia implementation of the **Block Symmetric Quasi-Minimal Residual (Block-SQMR)** method with a **restarts and seed** mechanism. 
 
 This solver is specifically designed to efficiently solve large, sparse, complex symmetric linear systems $AX = B$ with hundreds of right-hand sides, which commonly arise in computational electromagnetics (e.g., calculating radar cross sections for multiple incident angles).
 
