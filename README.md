@@ -1,4 +1,4 @@
-# Dynamic Seed-Block SQMR
+# Restarted Seed Block SQMR
 
 A high-performance Julia implementation of the **Block Symmetric Quasi-Minimal Residual (Block-SQMR)** method with a dynamic **Seed Deflation** mechanism. 
 
