@@ -7,6 +7,7 @@ using Plots
 using Printf
 using SparseArrays
 using Formatting
+using Profile
 
 function norms2(A)
     return [norm(c) for c in eachcol(A)]
@@ -18,28 +19,30 @@ function get_thin_Q(QR, m)
     return QR.Q * I_thin
 end
 
-function save_csv_row(filename, k, block_size, curr_norms, states, is_first)
-    d = Dict{String,Float64}()
-    max_res = maximum(curr_norms)
-    d["k"] = Float64(k)
-    d["real_residual"] = Float64(max_res)
-    d["quasi_residual"] = Float64(max_res)
-    d["block_size"] = Float64(block_size)
+function append_history!(hist_k, hist_max_res, hist_block_size, hist_norms, hist_states, k, block_size, curr_norms, states)
+    push!(hist_k, k)
+    push!(hist_max_res, maximum(curr_norms))
+    push!(hist_block_size, block_size)
+    push!(hist_norms, copy(curr_norms))
+    push!(hist_states, copy(states))
+end
 
-    m_total = length(curr_norms)
-    for i in 1:m_total
-        d["res_$i"] = Float64(curr_norms[i])
-        d["state_$i"] = Float64(states[i])
-    end
-    df = DataFrame([d])
+function write_history_to_csv(filename, hist_k, hist_max_res, hist_block_size, hist_norms, hist_states)
+    m_total = length(hist_norms[1])
 
-    cols = ["k", "real_residual", "quasi_residual", "block_size"]
+    df = DataFrame(
+        k=hist_k,
+        real_residual=hist_max_res,
+        quasi_residual=hist_max_res,
+        block_size=hist_block_size
+    )
+
     for i in 1:m_total
-        push!(cols, "res_$i")
-        push!(cols, "state_$i")
+        df[!, "res_$i"] = [n[i] for n in hist_norms]
+        df[!, "state_$i"] = [s[i] for s in hist_states]
     end
-    select!(df, cols)
-    CSV.write(filename, df; append=!is_first)
+
+    CSV.write(filename, df)
 end
 
 # ==============================================================================
@@ -58,7 +61,14 @@ function bsqmr_original(A, B, tol, filename)
     R0_norms = norms2(R)
 
     states = ones(Int, m)
-    save_csv_row(filename, 0, m, ones(T_real, m), states, true)
+
+    hist_k = Int[]
+    hist_max_res = Float64[]
+    hist_block_size = Int[]
+    hist_norms = Vector{Float64}[]
+    hist_states = Vector{Int}[]
+
+    append_history!(hist_k, hist_max_res, hist_block_size, hist_norms, hist_states, 0, m, ones(T_real, m), states)
 
     # Init Lanczos
     Vₖ = copy(R)
@@ -129,10 +139,10 @@ function bsqmr_original(A, B, tol, filename)
         lmul!(QR_qmr.Q, Qₖ_full)
         Qₖ_star = Qₖ_full'
 
-        aₖ = Qₖ_star[1:m, 1:m]
-        bₖ = Qₖ_star[1:m, m+1:2m]
-        cₖ = Qₖ_star[m+1:2m, 1:m]
-        dₖ = Qₖ_star[m+1:2m, m+1:2m]
+        aₖ = @views Qₖ_star[1:m, 1:m]
+        bₖ = @views Qₖ_star[1:m, m+1:2m]
+        cₖ = @views Qₖ_star[m+1:2m, 1:m]
+        dₖ = @views Qₖ_star[m+1:2m, m+1:2m]
 
         ζₖ = aₖ * ζ_tilde + bₖ * βₖ₊₁
 
@@ -152,7 +162,9 @@ function bsqmr_original(A, B, tol, filename)
         if all(curr_norms .<= tol_T)
             states .= 2
         end
-        save_csv_row(filename, k, m, curr_norms, states, false)
+
+        append_history!(hist_k, hist_max_res, hist_block_size, hist_norms, hist_states, k, m, curr_norms, states)
+
         if all(curr_norms .<= tol_T)
             break
         end
@@ -201,8 +213,14 @@ function bsqmr_seed_restarted(A, B, tol, filename; max_active=45, threshold_tau=
     is_first_save = true
     initial_idx_a = Int[]
 
+    hist_k = Int[]
+    hist_max_res = Float64[]
+    hist_block_size = Int[]
+    hist_norms = Vector{Float64}[]
+    hist_states = Vector{Int}[]
+
     while !isempty(unconverged_idx)
-        R_rem = R_full[:, unconverged_idx]
+        R_rem = @view R_full[:, unconverged_idx]
         norms_rem = norms2(R_rem)
 
         B_normalized = R_rem ./ transpose(norms_rem)
@@ -227,7 +245,7 @@ function bsqmr_seed_restarted(A, B, tol, filename; max_active=45, threshold_tau=
 
         if is_first_save
             initial_idx_a = copy(idx_a)
-            save_csv_row(filename, 0, m_a, global_norms, global_states, true)
+            append_history!(hist_k, hist_max_res, hist_block_size, hist_norms, hist_states, 0, m_a, global_norms, global_states)
             is_first_save = false
         end
 
@@ -270,12 +288,15 @@ function bsqmr_seed_restarted(A, B, tol, filename; max_active=45, threshold_tau=
         δ_km1 = zeros(T, m_a, m_a)
         γₖ₋₁ = Matrix{T}(I, m_a, m_a)
 
+        # preallocations
+        AVₖ = zeros(T, size(A, 1), m_a)
         # --- INNER LOOP ---
         while true
-            AVₖ = A * Vₖ
+            mul!(AVₖ, A, Vₖ)
 
             δ_km1 = γₖ₋₁ \ (transpose(βₖ) * γₖ)
-            V_tilde = AVₖ - Vₖ₋₁ * δ_km1
+            V_tilde = copy(AVₖ) # Only allocates once
+            mul!(V_tilde, Vₖ₋₁, δ_km1, -1.0, 1.0) # V_tilde = -1*(Vₖ₋₁*δ_km1) + 1*V_tilde
             αₖ = γₖ \ (transpose(Vₖ) * V_tilde)
             V_tilde = V_tilde - Vₖ * αₖ
 
@@ -319,10 +340,10 @@ function bsqmr_seed_restarted(A, B, tol, filename; max_active=45, threshold_tau=
             lmul!(QR_qmr.Q, Qₖ_full)
             Qₖ_star = Qₖ_full'
 
-            aₖ = Qₖ_star[1:m_a, 1:m_a]
-            bₖ = Qₖ_star[1:m_a, m_a+1:2m_a]
-            cₖ = Qₖ_star[m_a+1:2m_a, 1:m_a]
-            dₖ = Qₖ_star[m_a+1:2m_a, m_a+1:2m_a]
+            aₖ = @views Qₖ_star[1:m_a, 1:m_a]
+            bₖ = @views Qₖ_star[1:m_a, m_a+1:2m_a]
+            cₖ = @views Qₖ_star[m_a+1:2m_a, 1:m_a]
+            dₖ = @views Qₖ_star[m_a+1:2m_a, m_a+1:2m_a]
 
             ζₖ = aₖ * ζ_tilde + bₖ * βₖ₊₁
             Pₖ = (Vₖ - Pₖ₋₁ * ηₖ - Pₖ₋₂ * θₖ) / ζₖ
@@ -330,14 +351,14 @@ function bsqmr_seed_restarted(A, B, tol, filename; max_active=45, threshold_tau=
 
             τₖ_a = aₖ * τ_tilde_a
             τ_tilde_a = cₖ * τ_tilde_a
-            X_a .+= Pₖ * τₖ_a
-            R_a .-= APₖ * τₖ_a
+            mul!(X_a, Pₖ, τₖ_a, 1.0, 1.0)
+            mul!(R_a, APₖ, τₖ_a, -1.0, 1.0)
 
             if m_seed > 0
                 τₖ_s = aₖ * τ_tilde_s + bₖ * ρ_s_kp1
                 τ_tilde_s = cₖ * τ_tilde_s + dₖ * ρ_s_kp1
-                X_s .+= Pₖ * τₖ_s
-                R_s .-= APₖ * τₖ_s
+                mul!(X_s, Pₖ, τₖ_s, 1.0, 1.0)
+                mul!(R_s, APₖ, τₖ_s, -1.0, 1.0)
             end
 
             curr_norms_a = norms2(R_a) ./ global_R0_norms[idx_a]
@@ -353,8 +374,8 @@ function bsqmr_seed_restarted(A, B, tol, filename; max_active=45, threshold_tau=
                     conv_global_idx = idx_s[conv_local_idx]
 
                     global_states[conv_global_idx] .= 2
-                    X_full[:, conv_global_idx] .+= X_s[:, conv_local_idx]
-                    R_full[:, conv_global_idx] .= R_s[:, conv_local_idx]
+                    @views X_full[:, conv_global_idx] .+= X_s[:, conv_local_idx]
+                    @views R_full[:, conv_global_idx] .= R_s[:, conv_local_idx]
 
                     keep_mask = .!converged_mask
                     idx_s = idx_s[keep_mask]
@@ -373,15 +394,15 @@ function bsqmr_seed_restarted(A, B, tol, filename; max_active=45, threshold_tau=
                 global_states[idx_a] .= 2
             end
 
-            save_csv_row(filename, global_k, m_a, global_norms, global_states, false)
+            append_history!(hist_k, hist_max_res, hist_block_size, hist_norms, hist_states, global_k, m_a, global_norms, global_states)
             global_k += 1
 
             if all(curr_norms_a .<= tol_T)
-                X_full[:, idx_a] .+= X_a
-                R_full[:, idx_a] .= R_a
+                @views X_full[:, idx_a] .+= X_a
+                @views R_full[:, idx_a] .= R_a
                 if m_seed > 0
-                    X_full[:, idx_s] .+= X_s
-                    R_full[:, idx_s] .= R_s
+                    @views X_full[:, idx_s] .+= X_s
+                    @views R_full[:, idx_s] .= R_s
                 end
                 unconverged_idx = idx_s
                 break
@@ -406,6 +427,8 @@ function bsqmr_seed_restarted(A, B, tol, filename; max_active=45, threshold_tau=
     end
 
     println("Solution finished in $(global_k-1) iterations.")
+
+    write_history_to_csv(filename, hist_k, hist_max_res, hist_block_size, hist_norms, hist_states)
     return X_full, initial_idx_a
 end
 
@@ -413,6 +436,8 @@ end
 # 3. TEST HARNESS
 # ==============================================================================
 function test_bsqmrr2_vs_deflation()
+    Profile.init(n=10^8, delay=0.01)
+
     if !isfile("./alm.jld2")
         println("File ./alm.jld2 not found.")
         return
@@ -435,13 +460,21 @@ function test_bsqmrr2_vs_deflation()
     threshold_tau = 0.01
     max_active = 722
 
+
+    println("\n--- WARMUP (Compiling Functions) ---")
+    bsqmr_seed_restarted(A, @views(B_raw[:, 1:5]), tol, "output/warmup.csv"; max_active=5, threshold_tau=threshold_tau)
+    println("\n--- 1. Running Seed Algorithm with Profiler ---")
+    Profile.clear() # Clear any previous profiling data
+
     println("\n--- 1. Running Seed Algorithm (Restarts & Dynamic Tracking) ---")
-    X_full, initial_idx_a = bsqmr_seed_restarted(A, B_raw, tol, file_defl; max_active=max_active, threshold_tau=threshold_tau)
+    @profview X_full, initial_idx_a = bsqmr_seed_restarted(A, B_raw, tol, file_defl; max_active=max_active, threshold_tau=threshold_tau)
+    println("\n--- PROFILING RESULTS ---")
+    Profile.print(format=:tree, mincount=10) # mincount filters out tiny visual noise
 
     m_active = length(initial_idx_a)
 
     println("\n--- 2. Running original on EXACT SAME active block (s=$m_active) ---")
-    @time bsqmr_original(A, B_raw[:, initial_idx_a], tol, file_orig)
+    @time bsqmr_original(A, @views(B_raw[:, initial_idx_a]), tol, file_orig)
 
     # --------------------------------------------------------------------------
     # Plotting
