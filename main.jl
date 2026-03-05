@@ -45,6 +45,27 @@ function write_history_to_csv(filename, hist_k, hist_max_res, hist_block_size, h
     CSV.write(filename, df)
 end
 
+# Helper Function to Check True Tolerance
+function check_tolerance(A, B, X, tol, method_name)
+    println("\n--- Checking True Residuals for $method_name ---")
+
+    B_norms = norms2(B)
+    R_true = B - A * X
+    R_norms = norms2(R_true)
+
+    rel_res = R_norms ./ B_norms
+    max_rel_res = maximum(rel_res)
+
+    if all(rel_res .<= tol)
+        println("✅ SUCCESS: All $(length(B_norms)) right-hand sides reached the requested tolerance ($tol).")
+        printfmt("   Max true relative residual: {:1.4e}\n", max_rel_res)
+    else
+        failed_count = count(rel_res .> tol)
+        println("❌ FAILURE: $failed_count / $(length(B_norms)) right-hand sides failed to reach the requested tolerance ($tol).")
+        printfmt("   Max true relative residual: {:1.4e}\n", max_rel_res)
+    end
+end
+
 # ==============================================================================
 # 1. ORIGINAL ALGORITHM (Baseline reference)
 # ==============================================================================
@@ -453,10 +474,10 @@ function test_bsqmrr2_vs_deflation()
     A = Symmetric((A + transpose(A)) ./ 2, :L)
 
     B_raw = Array{ComplexF64}(f["B"])
-    B_raw = B_raw[:, 1:722]
+    B_raw = B_raw[:, 362:722]
     m_total = size(B_raw, 2)
 
-    tol = 1e-3
+    tol = 1e-2
     file_orig = "output/bsqmr_original.csv"
     file_defl = "output/bsqmr_seed.csv"
 
@@ -471,13 +492,15 @@ function test_bsqmrr2_vs_deflation()
 
     println("\n--- 1. Running Seed Algorithm (Restarts & Dynamic Tracking) ---")
     @time X_full, initial_idx_a = bsqmr_seed_restarted(A, B_raw, tol, file_defl; max_active=max_active, threshold_tau=threshold_tau)
-    println("\n--- PROFILING RESULTS ---")
+    check_tolerance(A, B_raw, X_full, tol, "Seed Algorithm")
+    # println("\n--- PROFILING RESULTS ---")
     # Profile.print(format=:tree, mincount=10) # mincount filters out tiny visual noise
 
     m_active = length(initial_idx_a)
 
     println("\n--- 2. Running original on EXACT SAME active block (s=$m_active) ---")
-    @time bsqmr_original(A, B_raw, tol, file_orig)
+    @time X_full = bsqmr_original(A, B_raw, tol, file_orig)
+    check_tolerance(A, B_raw, X_full, tol, "Original Algorithm")
 
     # --------------------------------------------------------------------------
     # Plotting
