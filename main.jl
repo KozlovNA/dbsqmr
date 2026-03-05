@@ -187,6 +187,9 @@ function bsqmr_original(A, B, tol, filename)
 
         k += 1
     end
+    write_history_to_csv(filename, hist_k, hist_max_res, hist_block_size, hist_norms, hist_states)
+
+    return X
 end
 
 # ==============================================================================
@@ -436,7 +439,7 @@ end
 # 3. TEST HARNESS
 # ==============================================================================
 function test_bsqmrr2_vs_deflation()
-    Profile.init(n=10^8, delay=0.01)
+    # Profile.init(n=10^8, delay=0.01)
 
     if !isfile("./alm.jld2")
         println("File ./alm.jld2 not found.")
@@ -464,17 +467,17 @@ function test_bsqmrr2_vs_deflation()
     println("\n--- WARMUP (Compiling Functions) ---")
     bsqmr_seed_restarted(A, @views(B_raw[:, 1:5]), tol, "output/warmup.csv"; max_active=5, threshold_tau=threshold_tau)
     println("\n--- 1. Running Seed Algorithm with Profiler ---")
-    Profile.clear() # Clear any previous profiling data
+    # Profile.clear() # Clear any previous profiling data
 
     println("\n--- 1. Running Seed Algorithm (Restarts & Dynamic Tracking) ---")
-    @profview X_full, initial_idx_a = bsqmr_seed_restarted(A, B_raw, tol, file_defl; max_active=max_active, threshold_tau=threshold_tau)
+    @time X_full, initial_idx_a = bsqmr_seed_restarted(A, B_raw, tol, file_defl; max_active=max_active, threshold_tau=threshold_tau)
     println("\n--- PROFILING RESULTS ---")
-    Profile.print(format=:tree, mincount=10) # mincount filters out tiny visual noise
+    # Profile.print(format=:tree, mincount=10) # mincount filters out tiny visual noise
 
     m_active = length(initial_idx_a)
 
     println("\n--- 2. Running original on EXACT SAME active block (s=$m_active) ---")
-    @time bsqmr_original(A, @views(B_raw[:, initial_idx_a]), tol, file_orig)
+    @time bsqmr_original(A, B_raw, tol, file_orig)
 
     # --------------------------------------------------------------------------
     # Plotting
