@@ -507,23 +507,28 @@ function test_bsqmrr2_vs_deflation()
             r_val = res_matrix[t, j]
             s_val = state_matrix[t, j]
 
+            # 1. Assign the current point to its respective state
             if s_val == 1.0 # Active
                 mat_active[t, j] = r_val
-                if t > 1
-                    mat_active[t-1, j] = res_matrix[t-1, j]
-                end
                 max_act = isnan(max_act) ? r_val : max(max_act, r_val)
-
             elseif s_val == 0.0 # Seed
                 mat_seed[t, j] = r_val
-                if t > 1
-                    mat_seed[t-1, j] = res_matrix[t-1, j]
-                end
-
             elseif s_val == 2.0 # Converged
                 mat_conv[t, j] = r_val
-                if t > 1
-                    mat_conv[t-1, j] = res_matrix[t-1, j]
+            end
+
+            # 2. Connect the line segment from t-1 to t in the OLD color to prevent gaps
+            if t > 1
+                prev_s = state_matrix[t-1, j]
+                if prev_s != s_val
+                    # Add the point at `t` to the OLD state's array to finish the drop segment
+                    if prev_s == 1.0
+                        mat_active[t, j] = r_val
+                    elseif prev_s == 0.0
+                        mat_seed[t, j] = r_val
+                    elseif prev_s == 2.0
+                        mat_conv[t, j] = r_val
+                    end
                 end
             end
         end
